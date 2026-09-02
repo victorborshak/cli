@@ -350,6 +350,17 @@ func TestToLLMOutputs_DeployedFields(t *testing.T) {
 	assert.Equal(t, "datarobot/datarobot-deployed-llm", outputs[1].Model)
 }
 
+func TestToLLMOutputs_LiteLLMFields(t *testing.T) {
+	llms := []drapi.LLM{{LlmID: "gpt-4o", Name: "gpt-4o", Provider: "openai", Model: "gpt-4o", IsActive: true, Kind: drapi.LLMKindLiteLLM}}
+
+	outputs := toLLMOutputs(llms, "")
+
+	require.Len(t, outputs, 1)
+	assert.Equal(t, "litellm", outputs[0].Source)
+	assert.Equal(t, "openai", outputs[0].Provider)
+	assert.Equal(t, "gpt-4o", outputs[0].Model)
+}
+
 // TestToLLMOutputs_DeployedJSONKeys locks the wire contract CFX-6980 consumes:
 // snake_case source + deployment_id present on every entry.
 func TestToLLMOutputs_DeployedJSONKeys(t *testing.T) {
@@ -379,7 +390,7 @@ func TestPrintLLMTable_DeployedRow(t *testing.T) {
 // --- --source ---
 
 func TestSource_SetValid(t *testing.T) {
-	for _, want := range []Source{SourceAll, SourceGateway, SourceDeployed} {
+	for _, want := range []Source{SourceAll, SourceGateway, SourceDeployed, SourceLiteLLM} {
 		var got Source
 
 		require.NoError(t, got.Set(string(want)))
@@ -401,6 +412,36 @@ func TestSource_SetInvalid(t *testing.T) {
 func TestSource_MatchesOutputValues(t *testing.T) {
 	assert.Equal(t, drapi.LLMKindGateway, string(SourceGateway))
 	assert.Equal(t, drapi.LLMKindDeployed, string(SourceDeployed))
+	assert.Equal(t, drapi.LLMKindLiteLLM, string(SourceLiteLLM))
+}
+
+func TestListCmd_SourceLiteLLM(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/models", r.URL.Path)
+		assert.Equal(t, "Bearer lite-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"id":"gpt-4o","owned_by":"openai"}]}`)
+	}))
+
+	t.Setenv("LITELLM_BASE_URL", srv.URL)
+	t.Setenv("LITELLM_API_KEY", "lite-key")
+	t.Cleanup(srv.Close)
+
+	root := newTestCmd(t)
+	root.SetArgs([]string{"list", "--source", "litellm", "--output-format", "json"})
+
+	out := captureStdout(t, func() {
+		require.NoError(t, root.Execute())
+	})
+
+	var envelope struct {
+		LLMs []LLMOutput `json:"llms"`
+	}
+
+	require.NoError(t, json.Unmarshal([]byte(out), &envelope))
+	require.Len(t, envelope.LLMs, 1)
+	assert.Equal(t, drapi.LLMKindLiteLLM, envelope.LLMs[0].Source)
+	assert.Equal(t, "gpt-4o", envelope.LLMs[0].ID)
 }
 
 // TestListCmd_SourceGatewaySkipsDeployments is the point of the flag: the

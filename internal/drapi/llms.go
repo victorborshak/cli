@@ -15,7 +15,11 @@
 package drapi
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -29,6 +33,7 @@ import (
 const (
 	LLMKindGateway  = "gateway"
 	LLMKindDeployed = "deployed"
+	LLMKindLiteLLM  = "litellm"
 
 	// deployedModelSentinel is the litellm model string a deployed LLM is
 	// addressed by; the deployment id carries the actual routing. Matches the
@@ -38,6 +43,9 @@ const (
 	// targetTypeTextGeneration is the champion-model target type that marks a
 	// deployment as a chat LLM.
 	targetTypeTextGeneration = "TextGeneration"
+
+	liteLLMBaseURLEnv = "LITELLM_BASE_URL"
+	liteLLMAPIKeyEnv  = "LITELLM_API_KEY"
 )
 
 type LLM struct {
@@ -215,11 +223,79 @@ func GetDeployedLLMs() ([]LLM, error) {
 	return deployed, nil
 }
 
-// GetLLMsAndDeployed returns the union of LLM Gateway catalog models and
-// DataRobot-deployed LLMs. Each source is best-effort: a single-source failure
-// is logged and the other source is still returned, so an empty or disabled
-// gateway (common on-prem) or missing deployment access does not blank the
-// list. An error is returned only when both sources fail.
+// liteLLMModel is the subset of LiteLLM's /models response used in the CLI.
+// The LiteLLM OpenAI-compatible API identifies a model with id and optionally
+// reports its provider via owned_by.
+type liteLLMModel struct {
+	ID      string `json:"id"`
+	OwnedBy string `json:"owned_by"`
+}
+
+type liteLLMModelList struct {
+	Data []liteLLMModel `json:"data"`
+}
+
+// LiteLLMConfigured reports whether both credentials required to query the
+// standalone LiteLLM endpoint are available.
+func LiteLLMConfigured() bool {
+	return os.Getenv(liteLLMBaseURLEnv) != "" && os.Getenv(liteLLMAPIKeyEnv) != ""
+}
+
+// GetLiteLLMLLMs lists models exposed by the configured LiteLLM proxy.
+func GetLiteLLMLLMs() ([]LLM, error) {
+	baseURL := strings.TrimRight(os.Getenv(liteLLMBaseURLEnv), "/")
+
+	apiKey := os.Getenv(liteLLMAPIKeyEnv)
+
+	if baseURL == "" || apiKey == "" {
+		return nil, fmt.Errorf("LiteLLM requires %s and %s", liteLLMBaseURLEnv, liteLLMAPIKeyEnv)
+	}
+
+	url := baseURL + "/models"
+
+	req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:gosec // LiteLLM endpoint is explicitly configured by the user.
+	if err != nil {
+		return nil, fmt.Errorf("create LiteLLM models request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := NewHTTPClient(0).Do(req) //nolint:gosec // LiteLLM endpoint is explicitly configured by the user.
+	if err != nil {
+		return nil, fmt.Errorf("request LiteLLM models: %w", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, &HTTPError{StatusCode: resp.StatusCode, URL: url}
+	}
+
+	var models liteLLMModelList
+	if err = json.NewDecoder(resp.Body).Decode(&models); err != nil {
+		return nil, fmt.Errorf("decode LiteLLM models: %w", err)
+	}
+
+	llms := make([]LLM, 0, len(models.Data))
+	for _, model := range models.Data {
+		llms = append(llms, LLM{
+			LlmID:    model.ID,
+			Name:     model.ID,
+			Provider: model.OwnedBy,
+			IsActive: true,
+			Model:    model.ID,
+			Kind:     LLMKindLiteLLM,
+		})
+	}
+
+	return llms, nil
+}
+
+// GetLLMsAndDeployed returns the union of LLM Gateway catalog models,
+// DataRobot-deployed LLMs, and configured LiteLLM models. Each source is
+// best-effort: a single-source failure is logged and the other source is still
+// returned. LiteLLM is queried only when both of its required environment
+// variables are set. An error is returned only when every queried source fails.
 //
 // The sources are fetched concurrently. Each is a paginated round-trip set, so
 // the caller waits on the slower one instead of both.
@@ -232,12 +308,24 @@ func GetLLMsAndDeployed() (*LLMList, error) {
 	var (
 		gateway  *LLMList
 		deployed []LLM
+		liteLLM  []LLM
 		gwErr    error
 		depErr   error
+		liteErr  error
 		wg       sync.WaitGroup
 	)
 
 	wg.Add(2)
+
+	if LiteLLMConfigured() {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			liteLLM, liteErr = GetLiteLLMLLMs()
+		}()
+	}
 
 	go func() {
 		defer wg.Done()
@@ -267,8 +355,29 @@ func GetLLMsAndDeployed() (*LLMList, error) {
 		log.Warnf("Could not list DataRobot-deployed LLMs: %s", depErr.Error())
 	}
 
-	if gwErr != nil && depErr != nil {
-		return nil, errors.Join(gwErr, depErr)
+	if liteErr != nil {
+		warnings = append(warnings, "LiteLLM models unavailable: "+liteErr.Error())
+
+		log.Warnf("Could not list LiteLLM models: %s", liteErr.Error())
+	}
+
+	errs := []error{gwErr, depErr}
+	if LiteLLMConfigured() {
+		errs = append(errs, liteErr)
+	}
+
+	allFailed := true
+
+	for _, err := range errs {
+		if err == nil {
+			allFailed = false
+
+			break
+		}
+	}
+
+	if allFailed {
+		return nil, errors.Join(errs...)
 	}
 
 	var llms []LLM
@@ -278,6 +387,7 @@ func GetLLMsAndDeployed() (*LLMList, error) {
 	}
 
 	llms = append(llms, deployed...)
+	llms = append(llms, liteLLM...)
 
 	return &LLMList{LLMs: llms, Count: len(llms), TotalCount: len(llms), Warnings: warnings}, nil
 }

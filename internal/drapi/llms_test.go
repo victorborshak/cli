@@ -78,6 +78,8 @@ func setupRoutedServer(t *testing.T, catalog, deployments routeResponse) {
 
 const gatewayBody = `{"data":[{"llmId":"llm-001","name":"GPT-4o","provider":"azure","model":"gpt-4o","isActive":true}],"count":1,"totalCount":1}`
 
+const liteLLMBody = `{"data":[{"id":"gpt-4o","owned_by":"openai"}]}`
+
 // deployedBody mixes a valid chat deployment with two that must be filtered
 // out client-side: an inactive TextGeneration deployment and an active
 // non-TextGeneration deployment.
@@ -101,6 +103,40 @@ func TestGetDeployedLLMs_MapsAndFilters(t *testing.T) {
 	assert.Equal(t, deployedModelSentinel, got.Model)
 	assert.Equal(t, LLMKindDeployed, got.Kind)
 	assert.True(t, got.IsActive)
+}
+
+func TestGetLiteLLMLLMs_MapsModelsAndAuthorizesRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/models", r.URL.Path)
+		assert.Equal(t, "Bearer lite-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, liteLLMBody)
+	}))
+
+	t.Setenv(liteLLMBaseURLEnv, srv.URL+"/")
+	t.Setenv(liteLLMAPIKeyEnv, "lite-key")
+	t.Cleanup(srv.Close)
+
+	llms, err := GetLiteLLMLLMs()
+	require.NoError(t, err)
+	require.Len(t, llms, 1)
+	assert.Equal(t, "gpt-4o", llms[0].LlmID)
+	assert.Equal(t, "gpt-4o", llms[0].Name)
+	assert.Equal(t, "gpt-4o", llms[0].Model)
+	assert.Equal(t, "openai", llms[0].Provider)
+	assert.Equal(t, LLMKindLiteLLM, llms[0].Kind)
+	assert.True(t, llms[0].IsActive)
+}
+
+func TestGetLiteLLMLLMs_RequiresBothEnvironmentVariables(t *testing.T) {
+	t.Setenv(liteLLMBaseURLEnv, "http://localhost:4000")
+	t.Setenv(liteLLMAPIKeyEnv, "")
+
+	assert.False(t, LiteLLMConfigured())
+
+	_, err := GetLiteLLMLLMs()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), liteLLMAPIKeyEnv)
 }
 
 func TestGetDeployedLLMs_Pagination(t *testing.T) {
@@ -150,6 +186,25 @@ func TestGetLLMsAndDeployed_Union(t *testing.T) {
 	assert.Equal(t, LLMKindDeployed, list.LLMs[1].Kind)
 	assert.Equal(t, "dep-active-tg", list.LLMs[1].LlmID)
 	assert.Equal(t, 2, list.Count)
+}
+
+func TestGetLLMsAndDeployed_IncludesConfiguredLiteLLM(t *testing.T) {
+	liteLLMServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/models", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, liteLLMBody)
+	}))
+
+	t.Setenv(liteLLMBaseURLEnv, liteLLMServer.URL)
+	t.Setenv(liteLLMAPIKeyEnv, "lite-key")
+	t.Cleanup(liteLLMServer.Close)
+	setupRoutedServer(t, routeResponse{body: gatewayBody}, routeResponse{body: deployedBody})
+
+	list, err := GetLLMsAndDeployed()
+	require.NoError(t, err)
+	require.Len(t, list.LLMs, 3)
+	assert.Equal(t, LLMKindLiteLLM, list.LLMs[2].Kind)
+	assert.Equal(t, "gpt-4o", list.LLMs[2].LlmID)
 }
 
 func TestGetLLMsAndDeployed_GatewayFailsSoftDegrade(t *testing.T) {
