@@ -13,7 +13,7 @@ dr llm [flags]           # alias
 
 The `dr llm-gateway` group exposes two subcommands:
 
-- **`list`** — fetch available LLMs from active LLM Gateway catalog models (`/api/v2/genai/llmgw/catalog/`), DataRobot-deployed LLMs (`/api/v2/deployments/`, deployments whose champion model is a `TextGeneration` model), and LiteLLM (`$LITELLM_BASE_URL/models`, when configured). A `SOURCE` column / `source` field distinguishes them. `--source` narrows it to one.
+- **`list`** — fetch available LLMs from active LLM Gateway catalog models (`/api/v2/genai/llmgw/catalog/`), DataRobot-deployed LLMs (`/api/v2/deployments/`, deployments whose champion model is a `TextGeneration` model), and LiteLLM (`$DATAROBOT_LITELLM_BASE_URL/models`, when configured). A `SOURCE` column / `source` field distinguishes them. `--source` narrows it to one.
 - **`select`** — choose a default LLM, either by ID or through an interactive TUI picker. The selection is persisted to `drconfig.yaml` and read by other CLI commands.
 
 When all sources are queried (`select`, and `list` without `--source`), each is best-effort: if one cannot be reached (e.g. an empty LLM Gateway on-prem, no deployment access, or an unavailable LiteLLM proxy), the command logs a warning and lists the others, and errors only when every queried source fails. The sources are fetched in parallel, so the command waits on the slowest source. Asking `list` for a single source instead makes a failure to reach it an error, since there is no other source left to show.
@@ -34,7 +34,7 @@ dr llm ls               # shortest alias
 **Flags:**
 
 - `--output-format <json>` — emit machine-parseable JSON instead of a table.
-- `--source <all|gateway|deployed|litellm>` — which sources to query. Defaults to `all`. `gateway`, `deployed`, and `litellm` skip requests to the other sources, so a script that needs one source does not wait on them. `litellm` requires both `LITELLM_BASE_URL` and `LITELLM_API_KEY`. The values are the same strings the `SOURCE` column and the JSON `source` field carry. A single source that cannot be reached is an error rather than an empty list.
+- `--source <all|gateway|deployed|litellm>` — which sources to query. Defaults to `all`. `gateway`, `deployed`, and `litellm` skip requests to the other sources, so a script that needs one source does not wait on them. `litellm` requires both `DATAROBOT_LITELLM_BASE_URL` and `DATAROBOT_LITELLM_API_KEY`. The values are the same strings the `SOURCE` column and the JSON `source` field carry. A single source that cannot be reached is an error rather than an empty list.
 
 **Output columns (table):**
 
@@ -140,8 +140,8 @@ export DATAROBOT_CLI_DEFAULT_LLM_ID=llm-abc123
 To include models from LiteLLM in `list` and `select`, configure both:
 
 ```bash
-export LITELLM_BASE_URL=https://your-litellm-proxy.example
-export LITELLM_API_KEY=your-litellm-api-key
+export DATAROBOT_LITELLM_BASE_URL=https://your-litellm-proxy.example
+export DATAROBOT_LITELLM_API_KEY=your-litellm-api-key
 ```
 
 The `dr llm-gateway list` output uses this value to mark the currently selected model with `*`.

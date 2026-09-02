@@ -423,8 +423,8 @@ func TestListCmd_SourceLiteLLM(t *testing.T) {
 		_, _ = io.WriteString(w, `{"data":[{"id":"gpt-4o","owned_by":"openai"}]}`)
 	}))
 
-	t.Setenv("LITELLM_BASE_URL", srv.URL)
-	t.Setenv("LITELLM_API_KEY", "lite-key")
+	t.Setenv("DATAROBOT_LITELLM_BASE_URL", srv.URL)
+	t.Setenv("DATAROBOT_LITELLM_API_KEY", "lite-key")
 	t.Cleanup(srv.Close)
 
 	root := newTestCmd(t)

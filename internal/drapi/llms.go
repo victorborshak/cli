@@ -44,8 +44,8 @@ const (
 	// deployment as a chat LLM.
 	targetTypeTextGeneration = "TextGeneration"
 
-	liteLLMBaseURLEnv = "LITELLM_BASE_URL"
-	liteLLMAPIKeyEnv  = "LITELLM_API_KEY"
+	liteLLMBaseURLEnv = "DATAROBOT_LITELLM_BASE_URL"
+	liteLLMAPIKeyEnv  = "DATAROBOT_LITELLM_API_KEY"
 )
 
 type LLM struct {
