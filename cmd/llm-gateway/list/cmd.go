@@ -84,10 +84,10 @@ func Cmd() *cobra.Command {
 	outputformat.AddFlag(cmd, &outputFormat)
 
 	cmd.Flags().Var(&source, "source",
-		fmt.Sprintf("LLM sources to list (%s, %s, %s)", SourceAll, SourceGateway, SourceDeployed))
+		fmt.Sprintf("LLM sources to list (%s, %s, %s, %s)", SourceAll, SourceGateway, SourceDeployed, SourceLiteLLM))
 
 	_ = cmd.RegisterFlagCompletionFunc("source", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-		return []string{string(SourceAll), string(SourceGateway), string(SourceDeployed)}, cobra.ShellCompDirectiveNoFileComp
+		return []string{string(SourceAll), string(SourceGateway), string(SourceDeployed), string(SourceLiteLLM)}, cobra.ShellCompDirectiveNoFileComp
 	})
 
 	telemetry.TrackWith(cmd, func(_ *cobra.Command, _ []string) map[string]any {

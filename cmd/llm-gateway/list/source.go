@@ -30,6 +30,7 @@ const (
 	SourceAll      Source = "all"
 	SourceGateway  Source = drapi.LLMKindGateway
 	SourceDeployed Source = drapi.LLMKindDeployed
+	SourceLiteLLM  Source = drapi.LLMKindLiteLLM
 )
 
 var _ pflag.Value = (*Source)(nil)
@@ -44,13 +45,13 @@ func (s *Source) String() string {
 
 func (s *Source) Set(v string) error {
 	switch Source(v) {
-	case SourceAll, SourceGateway, SourceDeployed:
+	case SourceAll, SourceGateway, SourceDeployed, SourceLiteLLM:
 		*s = Source(v)
 
 		return nil
 	}
 
-	return fmt.Errorf("invalid source %q: use %s, %s, or %s", v, SourceAll, SourceGateway, SourceDeployed)
+	return fmt.Errorf("invalid source %q: use %s, %s, %s, or %s", v, SourceAll, SourceGateway, SourceDeployed, SourceLiteLLM)
 }
 
 func (s *Source) Type() string {
@@ -85,6 +86,15 @@ func fetchLLMs(source Source) (*drapi.LLMList, error) {
 		}
 
 		return &drapi.LLMList{LLMs: deployed, Count: len(deployed), TotalCount: len(deployed)}, nil
+	}
+
+	if source == SourceLiteLLM {
+		liteLLM, err := drapi.GetLiteLLMLLMs()
+		if err != nil {
+			return nil, err
+		}
+
+		return &drapi.LLMList{LLMs: liteLLM, Count: len(liteLLM), TotalCount: len(liteLLM)}, nil
 	}
 
 	// SourceAll, and a zero value that never went through Set.
